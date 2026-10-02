@@ -1,0 +1,24 @@
+{
+  "image_width": 1920,
+  "image_height": 1080,
+  "polygon": [
+    [0, 389],
+    [800, 340],
+    [1120, 324],
+    [1270, 326],
+    [1490, 345],
+    [1919, 383],
+    [1919, 518],
+    [1700, 633],
+    [1450, 780],
+    [1180, 927],
+    [900, 1079],
+    [0, 1079]
+  ],
+  "boundary_margin_px": 12,
+  "calibration": {
+    "source": "57-test.mp4",
+    "frame_index": 1800
+  },
+  "notes": "Experimental manual approximation of visible ice at decoded frame 1800 (about 60 seconds). Not validated across camera pans. Review or replace these vertices using calibrate_rink.py. The polygon includes the visible goal area; it does not classify teams or roles."
+}

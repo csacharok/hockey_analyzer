@@ -1,0 +1,11 @@
+.env
+.venv/
+__pycache__/
+
+input/
+output/
+runs/
+scratch/
+
+*.zip
+*.pt
