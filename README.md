@@ -1,482 +1,171 @@
-# Hockey Analyzer Roadmap
+# Hockey Analyzer
 
-## Team-classification baseline
+Hockey Analyzer is a local computer-vision and machine-learning project for extracting auditable hockey observations and, eventually, team- and player-level analysis from game video.
 
-Team analysis is opt-in and does not alter the existing tracking or target-identity defaults. It requires both the existing on-ice polygon and a per-game visual profile:
+The current priority is reliable anonymous participant and team analysis. Persistent identification of a rostered player remains a downstream capability, not a prerequisite for useful results.
+
+## Current architecture
+
+The project separates visual observation, semantic interpretation, temporal reasoning, hockey-event understanding, and optional player identity:
+
+```text
+video
+  -> YOLO person detection
+  -> ByteTrack temporary tracking
+  -> provider masking / rink geometry / participation evidence
+  -> semantic-free appearance observations
+  -> human-ground-truth tracklet labels
+  -> learned participant classifier [NEXT MILESTONE]
+  -> temporal semantic aggregation
+  -> anonymous hockey analysis
+  -> optional persistent player identity
+```
+
+ByteTrack IDs are temporary tracklet identifiers. They must not be treated as permanent player identities or jersey numbers.
+
+### Observation versus interpretation
+
+Classical computer vision is the observation and sensing layer. It is responsible for evidence such as:
+
+- person detections and temporary tracklets,
+- configured provider-overlay exclusion,
+- camera-relative rink boundaries,
+- on-ice participation evidence,
+- normalized body-region measurements,
+- torso, pants, and lower-leg appearance,
+- stripe structure,
+- crop and measurement quality,
+- source-frame provenance.
+
+Learned models are the forward semantic interpretation architecture. The next model milestone will use human ground truth to classify participant semantics from some combination of person crops, structured appearance evidence, participation/rink evidence, and tracklet context.
+
+Measurement quality, training suitability, and semantic ground truth are distinct concepts. A measurable crop can still contain an occluded player, multiple people, a spectator, a coach, or another unsuitable subject.
+
+### Rink and participation evidence
+
+Normal operation uses camera-relative evidence:
+
+- visible far-side board/kickplate evidence,
+- near-board boundary evidence,
+- lower-bbox/contact-point geometry,
+- local surface evidence,
+- explicit accepted, rejected, or uncertain participation decisions.
+
+Static rink polygons are retained only as legacy/debug behavior. They are not the normal portability solution and should not drive semantic team or official classification.
+
+Configured provider masks use normalized coordinates and can be applied to the analysis path before detection and rink sensing. Original unmasked frames remain available for annotation, crop generation, and human review.
+
+## Current milestone: learned participant classification
+
+The human-ground-truth labeling milestone is complete. The next milestone is to benchmark a narrow learned participant classifier against that ground truth.
+
+Initial work should:
+
+1. preserve tracklet-aware grouping so observations from one temporary tracklet never cross train/validation/test boundaries,
+2. begin with simple, well-understood pretrained vision classifiers or backbones,
+3. evaluate image inputs and structured appearance evidence empirically,
+4. report dataset composition, split methodology, per-class precision/recall/F1, confusion matrices, cross-game behavior, and visual failure modes,
+5. preserve uncertainty rather than force unsupported classifications.
+
+Randomly splitting adjacent frames is leakage and does not demonstrate portability. As more data becomes available, evaluation should increasingly test different games, rinks, cameras, lighting, providers, and uniforms.
+
+Classifier implementation and training have not begun as part of this documentation update.
+
+## Dataset v1
+
+Dataset v1 contains 300 human-labeled temporary tracklets from the two current benchmark games.
+
+| Human label | Tracklets |
+|---|---:|
+| HOME | 51 |
+| AWAY | 52 |
+| OFFICIAL | 13 |
+| NON_PARTICIPANT | 166 |
+| MIXED_TRACK | 5 |
+| UNSURE | 13 |
+| **Total** | **300** |
+
+The label audit was completed with no changes.
+
+Human labels are authoritative ground truth and remain separate from appearance measurements, participation decisions, legacy pseudo-labels, and future model predictions.
+
+`MIXED_TRACK` and `UNSURE` are human-review outcomes; they are not automatically semantic training classes. Their treatment must be chosen explicitly when defining the first model dataset and evaluation protocol.
+
+Goalies are currently labeled by team as `HOME` or `AWAY`. Goalie status is orthogonal to team semantics. A future `PLAYER_ROLE` annotation such as `SKATER` or `GOALIE` should be introduced only if model error analysis demonstrates that it is useful.
+
+### Dataset preservation
+
+The working dataset remains under ignored `output/` storage and is backed up separately. These directories are frozen project assets and must not be casually regenerated, overwritten, or modified:
+
+```text
+output/labeling_dataset_v1/
+output/appearance_features_v1/
+```
+
+Dataset v1 depends on both layers:
+
+- `output/labeling_dataset_v1/` contains representative crops, deterministic candidate metadata, the manifest, labeling guide, report, and human labels.
+- `output/appearance_features_v1/` contains the semantic-free source observations, tracklet summaries, and feature schema used to construct the labeling project and preserve provenance.
+
+[`docs/datasets/dataset_v1_checksums.json`](docs/datasets/dataset_v1_checksums.json) records SHA-256 fingerprints and byte sizes for the frozen labels, candidates, manifest, appearance schema, observation exports, tracklet summaries, and source-video assets. Use it to verify restored or transferred copies; do not use regenerated model output to overwrite human labels.
+
+Source videos under `input/` are read-only provenance assets.
+
+## Preserved legacy and experimental work
+
+### V7 handcrafted semantic baseline
+
+The existing handcrafted `HOME` / `AWAY` / `OFFICIAL` / `UNKNOWN` classifier remains preserved and tested as the V7 legacy baseline.
+
+Its outputs are useful for regression, diagnostics, and pseudo-label metadata. They are not human ground truth and are not the forward semantic architecture. Semantic failures should not be addressed by adding increasingly complex handcrafted rule trees unless an explicitly scoped classical-baseline experiment calls for it.
+
+### Persistent target identity
+
+The target-specific tracking and reacquisition system remains preserved experimental/downstream work. It includes ByteTrack-authoritative binding, motion and geometry history, temporal appearance evidence, ambiguity handling, and HSV appearance galleries.
+
+Offline OSNet and DINOv2 experiments did not justify production integration for distinguishing similarly uniformed players. Persistent identity should eventually combine multiple independent cues and must be able to return `UNKNOWN`.
+
+Anonymous hockey analysis should remain useful when persistent player identity is unavailable.
+
+## Development direction
+
+After learned participant classification, the intended progression is:
+
+```text
+learned participant classification
+  -> temporal semantic aggregation
+  -> anonymous rink position and team occupancy
+  -> puck detection
+  -> simple observable events
+  -> possession evidence and zone transitions
+  -> team structure and pressure
+  -> optional persistent roster identity
+  -> player-level and higher-level hockey analysis
+```
+
+Higher-level conclusions must remain traceable to source timestamps, tracklets, semantic assignments, confidence/evidence, and reviewable frames or clips.
+
+## Testing
+
+Run the complete test suite from the repository root:
 
 ```powershell
-.venv\Scripts\python.exe analyze_tracks.py input\57-test.mp4 `
-  --rink configs\57-test.example.rink.json `
-  --team-config configs\57-test.example.team.json
+.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-The run writes an annotated video, observation JSONL, summary JSON, and review contact sheet to `output/team_baseline/`. Labels are `HOME`, `AWAY`, `OFFICIAL`, or `UNKNOWN`; the displayed number remains a temporary ByteTrack track ID, not a player identity. HOME/AWAY colors are configuration, because uniform colors differ between games.
+Tests cover current observation infrastructure, dataset and labeling integrity, the preserved V7 baseline, and persistent target-identity behavior. Do not remove legacy tests while the corresponding functionality remains intentionally preserved.
 
-## Vision
+## Project guidance
 
-Build a hockey-video analysis system that can transform ordinary game footage into auditable team and player analysis.
+See [`AGENTS.md`](AGENTS.md) for the authoritative architectural and development rules and [`ROADMAP.md`](ROADMAP.md) for milestone sequencing.
 
-The system should eventually answer questions at several levels:
+Core principles:
 
-```text
-What happened?
-Which team did it?
-Which anonymous player did it?
-Which rostered player was that?
-Was it a good hockey play?
-```
-
-These are separate problems and should not block one another unnecessarily.
-
----
-
-# Current strategy
-
-Development originally began with persistent identification of one specific player.
-
-That work demonstrated that:
-
-- player detection is practical,
-- short-term ByteTrack tracking is useful,
-- team distinction is substantially easier than persistent individual identity,
-- individual identity becomes difficult after occlusion and track fragmentation,
-- generic visual ReID models do not reliably distinguish similarly uniformed hockey players.
-
-The project is therefore pivoting to **team-level analysis first**.
-
-Persistent player identity remains an important downstream capability.
-
----
-
-# Phase 0 — Video and CV foundation
-
-## Status: COMPLETE
-
-Establish the basic local analysis pipeline.
-
-Completed capabilities include:
-
-- source-video decoding,
-- YOLO player detection,
-- ByteTrack tracking,
-- annotated-video generation,
-- structured diagnostic output,
-- GPU acceleration,
-- repeatable benchmark execution,
-- automated tests.
-
-The benchmark demonstrated that temporary track IDs are useful but cannot be treated as permanent player identities.
-
----
-
-# Phase 1 — Player identity research
-
-## Status: PAUSED / FOUNDATION PRESERVED
-
-Initial goal:
-
-> Reliably follow one known player through track fragmentation.
-
-Implemented and investigated:
-
-- target seeding,
-- ByteTrack-authoritative binding,
-- reacquisition after disappearance,
-- confidence-aware motion,
-- temporal appearance evidence,
-- geometry history,
-- ambiguity handling,
-- HSV appearance galleries.
-
-Successful benchmark continuity improved from the original Track 3 to:
-
-```text
-3 → 669 → 778
-```
-
-without benchmark-specific production hardcoding.
-
-Track 840 became a plausible reacquisition candidate but remained unresolved because competing candidates created legitimate ambiguity.
-
-### ReID experiments
-
-Offline visual embedding experiments evaluated:
-
-- OSNet,
-- DINOv2 ViT-S/14.
-
-Neither was suitable for production integration.
-
-Both demonstrated that generic visual embeddings have difficulty distinguishing hockey teammates wearing nearly identical uniforms.
-
-DINOv2 also demonstrated that a simple deterministic inset crop does not solve the problem.
-
-### Decision
-
-Do not continue tuning persistent player identity against the current benchmark at this stage.
-
-Preserve all existing identity functionality and tests.
-
-Return to persistent identity after the team-analysis foundation provides stronger contextual constraints.
-
----
-
-# Phase 2 — Team classification
-
-## Status: ACTIVE
-
-## Goal
-
-Classify detected on-ice participants into useful team/role categories while preserving anonymous track IDs.
-
-Initial classes:
-
-```text
-HOME
-AWAY
-OFFICIAL
-UNKNOWN
-```
-
-The implementation should not require knowledge of individual player identity.
-
-## Milestone 2.1 — Team-classification baseline
-
-Build an offline analysis of the existing benchmark.
-
-For every relevant tracked participant:
-
-- retain ByteTrack track ID,
-- classify team/role,
-- record confidence/evidence,
-- allow UNKNOWN,
-- generate diagnostics.
-
-Produce an annotated video showing approximately:
-
-```text
-HOME  #123
-AWAY  #456
-OFFICIAL #88
-UNKNOWN #901
-```
-
-Track IDs remain temporary identifiers.
-
-### Acceptance criteria
-
-The system must:
-
-- classify teams using generic visual evidence,
-- avoid benchmark-ID hardcoding,
-- preserve existing player-identity behavior,
-- preserve all existing tests,
-- expose uncertainty rather than force classification.
-
----
-
-## Milestone 2.2 — Temporal team stability
-
-Prevent team labels from unnecessarily oscillating frame to frame.
-
-Investigate:
-
-- track-level evidence accumulation,
-- confidence hysteresis,
-- uniform-color history,
-- recovery after partial occlusion.
-
-A track's historical team evidence may be stronger than one contaminated frame.
-
-Team identity should remain independent from permanent player identity.
-
----
-
-## Milestone 2.3 — Team-classification validation
-
-Evaluate team classification across:
-
-1. the existing benchmark,
-2. another game from the same rink,
-3. footage with different conditions,
-4. eventually another rink/camera configuration.
-
-Measure:
-
-- classification coverage,
-- HOME/AWAY errors,
-- OFFICIAL errors,
-- UNKNOWN rate,
-- label stability,
-- recovery after occlusion.
-
-Do not optimize solely for the original benchmark.
-
----
-
-# Phase 3 — Anonymous player tracking and rink position
-
-## Goal
-
-Turn team-classified tracklets into useful hockey observations without requiring roster identity.
-
-For each active tracklet, maintain information such as:
-
-```text
-track_id
-team
-bounding_box
-rink_position
-velocity
-confidence
-first_seen
-last_seen
-```
-
-## Milestone 3.1 — On-ice filtering
-
-Distinguish relevant on-ice participants from:
-
-- bench players,
-- spectators,
-- coaches,
-- reflections or false detections,
-- other irrelevant detections.
-
----
-
-## Milestone 3.2 — Rink-relative position
-
-Move toward normalized rink position rather than relying solely on raw image pixels.
-
-Initially use the simplest robust approach.
-
-Future versions may detect rink landmarks such as:
-
-- boards,
-- center/red line,
-- blue lines,
-- goal lines,
-- faceoff circles.
-
-Full rink calibration is not required until evidence shows it is necessary.
-
----
-
-## Milestone 3.3 — Anonymous tracklet analysis
-
-Extract useful continuous-track observations such as:
-
-- path traveled,
-- speed/movement estimates,
-- zone occupancy,
-- spacing relative to teammates,
-- proximity to opponents,
-- transition through rink regions.
-
-These statistics remain useful even when the roster identity is unknown.
-
----
-
-# Phase 4 — Puck detection and tracking
-
-## Goal
-
-Reliably detect and track the puck sufficiently for hockey-event analysis.
-
-Expected challenges include:
-
-- very small object size,
-- motion blur,
-- boards,
-- sticks/skates,
-- occlusion,
-- compression artifacts.
-
-Develop and validate puck tracking independently before using it as authoritative possession evidence.
-
-Allow puck state to become UNKNOWN when visibility is insufficient.
-
----
-
-# Phase 5 — Observable hockey events
-
-## Goal
-
-Infer simple, auditable events from player/team/puck observations.
-
-Begin with events closest to direct visual evidence.
-
-Candidate events include:
-
-- zone entry,
-- zone exit,
-- shot attempt,
-- puck recovery,
-- turnover,
-- dump-in,
-- clear,
-- contested puck,
-- rush,
-- line change.
-
-Every detected event should retain enough information to trace it back to the source video.
-
-Avoid subjective coaching judgments at this stage.
-
----
-
-# Phase 6 — Team-level hockey analysis
-
-## Goal
-
-Aggregate observable events and positioning into useful team analysis.
-
-Potential outputs include:
-
-- offensive-zone time,
-- defensive-zone time,
-- territorial pressure,
-- shot attempts,
-- entry/exit success,
-- possession evidence,
-- forecheck behavior,
-- player spacing,
-- team shape,
-- rush patterns,
-- line-change patterns,
-- heatmaps.
-
-Metrics should distinguish measured facts from inferred hockey concepts.
-
----
-
-# Phase 7 — Persistent player identity
-
-## Goal
-
-Associate anonymous tracklets with rostered players.
-
-Return to the player-identity problem with substantially more context than was available during Phase 1.
-
-Potential evidence includes:
-
-- team classification,
-- jersey-number evidence,
-- nameplate evidence,
-- equipment/stick characteristics,
-- track continuity,
-- motion,
-- geometry,
-- shift timing,
-- roster constraints,
-- known players currently on ice,
-- line combinations,
-- temporal identity history.
-
-A jersey number does not need to be readable on every frame.
-
-A high-confidence observation may establish identity temporarily, after which continuity can propagate it until evidence becomes insufficient.
-
-Identity should remain probabilistic/uncertain when evidence conflicts.
-
----
-
-# Phase 8 — Player-level analysis
-
-## Goal
-
-Attach hockey observations and events to persistent player identities.
-
-Potential outputs include:
-
-- shifts,
-- ice time,
-- zone time,
-- entries/exits,
-- shot attempts,
-- puck recoveries,
-- turnovers,
-- positioning,
-- pressure involvement,
-- clips of notable plays.
-
-This phase reconnects the team-analysis pipeline to the project's original player-analysis objective.
-
----
-
-# Phase 9 — Hockey interpretation and coaching analysis
-
-## Goal
-
-Build higher-level analysis on top of validated observations.
-
-Potential questions include:
-
-- Was the player in an appropriate position?
-- Did the player support the puck?
-- Was there an available passing option?
-- Did the player maintain defensive-side positioning?
-- Was an entry controlled or uncontrolled?
-- Did the team maintain useful spacing?
-
-Higher-level interpretations must remain traceable to observable evidence.
-
-Avoid presenting subjective analysis as objective measurement.
-
----
-
-# Phase 10 — Multi-rink robustness
-
-## Goal
-
-Generalize beyond the original camera and rink.
-
-Test variation in:
-
-- camera height,
-- viewing angle,
-- zoom,
-- camera movement,
-- lighting,
-- white balance,
-- rink geometry,
-- glass/stanchion placement,
-- netting,
-- overlays,
-- video resolution and compression.
-
-Add explicit camera/rink calibration only where testing demonstrates it is necessary.
-
-Avoid designing current algorithms around fixed benchmark coordinates.
-
----
-
-# Phase 11 — Productization
-
-Potential product capabilities include:
-
-- automatic full-game processing,
-- team reports,
-- player reports,
-- searchable event timelines,
-- automatic clip generation,
-- game comparisons,
-- season trends,
-- coaching review workflows.
-
-Product decisions should follow demonstrated analysis reliability rather than precede it.
-
----
-
-# Immediate next milestone
-
-## Team classification baseline
-
-The next development task is:
-
-> Classify tracked on-ice participants in the existing benchmark as HOME, AWAY, OFFICIAL, or UNKNOWN and render those classifications with temporary track IDs in an annotated video.
-
-Do not add puck tracking, event inference, roster identity, or complex rink calibration during this milestone.
-
-The purpose is to establish a reliable team-analysis foundation while preserving the existing player-identity work.
+- classical CV observes; learned models interpret,
+- human labels are ground truth; pseudo-labels are metadata,
+- temporary track IDs are not player identities,
+- uncertainty is preferable to a confident false classification,
+- benchmark videos are evidence, not specifications,
+- source video and frozen Dataset v1 assets retain provenance,
+- model evaluation must prevent tracklet and adjacent-frame leakage,
+- anonymous team analysis should not wait for persistent roster identity.

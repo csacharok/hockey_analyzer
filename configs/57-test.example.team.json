@@ -6,16 +6,16 @@
   "track_evidence_decay": 0.98,
   "profiles": {
     "HOME": {
+      "minimum_fraction": 0.38,
+      "masks": [
+        {"hue": [[0, 179]], "saturation": [0, 65], "value": [105, 255]}
+      ]
+    },
+    "AWAY": {
       "minimum_fraction": 0.12,
       "masks": [
         {"hue": [[0, 14], [166, 179]], "saturation": [65, 255], "value": [35, 155]},
         {"hue": [[15, 38]], "saturation": [70, 255], "value": [55, 230]}
-      ]
-    },
-    "AWAY": {
-      "minimum_fraction": 0.38,
-      "masks": [
-        {"hue": [[0, 179]], "saturation": [0, 65], "value": [105, 255]}
       ]
     },
     "OFFICIAL": {
@@ -32,7 +32,62 @@
     "minimum_edge_delta": 35,
     "minimum_bright_fraction": 0.25,
     "minimum_dark_fraction": 0.15,
-    "minimum_edge_fraction": 0.025
+    "minimum_vertical_edge_fraction": 0.025,
+    "minimum_vertical_orientation_ratio": 1.25,
+    "minimum_edges_per_row": 3,
+    "minimum_striped_row_fraction": 0.35,
+    "minimum_lower_body_dark_fraction": 0.30,
+    "minimum_establishment_detection_confidence": 0.50,
+    "minimum_establishment_bbox_height_fraction": 0.06,
+    "maximum_establishment_bbox_aspect_ratio": 1.20,
+    "qualified_role_boost": 1.20
   },
-  "notes": "Example per-game visual profiles measured from the benchmark; track IDs and image coordinates are not used."
+  "official_temporal": {
+    "establish_window": 12,
+    "establish_count": 4,
+    "minimum_stripe_ratio": 1.20,
+    "reverse_window": 15,
+    "reverse_count": 12,
+    "contradiction_confidence": 0.75,
+    "maximum_contradiction_stripe_ratio": 0.75,
+    "maximum_player_lower_body_dark_fraction": 0.25
+  },
+  "provider": {
+    "name": "blackbear",
+    "excluded_regions": [[0.895, 0.855, 0.995, 0.975]],
+    "post_detection_overlap_fraction": 0.60
+  },
+  "participant_filter": {
+    "maximum_ice_saturation": 75,
+    "minimum_ice_value": 105,
+    "reject_below_ice_fraction": 0.12,
+    "accept_at_ice_fraction": 0.35,
+    "minimum_contact_pixels": 40,
+    "use_static_polygon": false
+  },
+  "kickplate_boundary": {
+    "hue": [15, 40],
+    "minimum_saturation": 90,
+    "minimum_value": 70,
+    "bins": 48,
+    "maximum_gap_bins": 3,
+    "minimum_coverage": 0.30,
+    "contact_margin_px": 6
+  },
+  "near_board_boundary": {
+    "bins": 48,
+    "maximum_gap_bins": 3,
+    "minimum_coverage": 0.18,
+    "maximum_ice_saturation": 75,
+    "minimum_ice_value": 105,
+    "minimum_ice_above": 0.52,
+    "maximum_ice_below": 0.38,
+    "minimum_ice_contrast": 0.22,
+    "sample_offset_fraction": 0.025,
+    "contact_margin_px": 8,
+    "temporal_alpha": 0.65,
+    "maximum_temporal_gap_frames": 2,
+    "detection_scale": 0.25
+  },
+  "notes": "Benchmark game mapping: white uniforms are HOME and maroon/yellow uniforms are AWAY. Track IDs and image coordinates are not used."
 }

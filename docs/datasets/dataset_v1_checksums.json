@@ -1,0 +1,52 @@
+[
+    {
+        "Path":  "output\\labeling_dataset_v1\\labels.jsonl",
+        "Bytes":  69321,
+        "SHA256":  "E3382DEEA29CB94A59DF3F768D54550D14E09E2490E4FCC3B94933B60158E2D3"
+    },
+    {
+        "Path":  "output\\labeling_dataset_v1\\candidates.jsonl",
+        "Bytes":  243164,
+        "SHA256":  "9D33192EA0E53E1B518C0E2A7DA718C3972716410E886F7976E89B7C811A4197"
+    },
+    {
+        "Path":  "output\\labeling_dataset_v1\\manifest.json",
+        "Bytes":  4357,
+        "SHA256":  "3FB37F11BA412D90BD9223AB7AF71C20386F20D196BBA3C725C589CD82F2C93A"
+    },
+    {
+        "Path":  "output\\appearance_features_v1\\appearance_schema.json",
+        "Bytes":  1680,
+        "SHA256":  "C010C4D6AF45AC7C9AB1AA0D21F3C61BA8573CA87DEE91BDF3AE59594A0462F7"
+    },
+    {
+        "Path":  "output\\appearance_features_v1\\game1\\appearance_observations.jsonl",
+        "Bytes":  227818113,
+        "SHA256":  "0968AF84A98527DF5757AE97D9E45A059B8086BA336461804B99BAC5BC1AECF8"
+    },
+    {
+        "Path":  "output\\appearance_features_v1\\game1\\appearance_tracklets.json",
+        "Bytes":  596671,
+        "SHA256":  "D1F670C10AD13F34026764D5C6AA4AE1C89A6A01EE944560403DAE61D34F8623"
+    },
+    {
+        "Path":  "output\\appearance_features_v1\\game2\\appearance_observations.jsonl",
+        "Bytes":  435643709,
+        "SHA256":  "416E75AD63A73E7A85BC7293B3E7DDFC739D8D76CA8BF1D8AF73D911A8CEFA52"
+    },
+    {
+        "Path":  "output\\appearance_features_v1\\game2\\appearance_tracklets.json",
+        "Bytes":  972227,
+        "SHA256":  "9B8A70A7559D707EE89DDD946D160C39D08B2967A0248A7974BD718F0E11FA0A"
+    },
+    {
+        "Path":  "input\\57-test.mp4",
+        "Bytes":  95738826,
+        "SHA256":  "011FD753F9DD29FA2BF73F389373AAFDC514CD6F1C0647CFAC47A7308CD37EEF"
+    },
+    {
+        "Path":  "input\\DucksvDevils_test.mp4",
+        "Bytes":  125383404,
+        "SHA256":  "4A2C4207F761AC4C7B78E4335DE98B5494AD56B848075C1D7C8F4E2DA111F10F"
+    }
+]

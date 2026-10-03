@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 from collections import Counter
+from contextlib import nullcontext
 from dataclasses import dataclass
 import math
 from pathlib import Path
@@ -15,6 +16,11 @@ from rink_geometry import ON_ICE, OFF_ICE, UNKNOWN, STATES, RinkGeometry, contac
 from target_identity import Observation, TargetIdentity, appearance_histogram
 from team_classifier import TeamClassifier
 from team_diagnostics import TeamDiagnostics
+from participant_filter import ParticipantFilter, REJECTED
+from kickplate_boundary import KickplateBoundaryDetector
+from near_board_boundary import NearBoardBoundaryDetector
+from pipeline_profiler import PipelineProfiler
+from provider_overlay import ProviderOverlayMask
 
 
 ROOT = Path(__file__).resolve().parent
@@ -68,7 +74,8 @@ def summary(frames: int, elapsed: float, output: Path, unique_ids: set[int], cou
 
 
 def draw_annotations(frame, detections, tracked_boxes, cv2, rink=None, counts=None,
-                     team_results=None) -> set[int]:
+                     team_results=None, participant_results=None, boundary=None,
+                     near_boundary=None, use_static_polygon=False) -> set[int]:
     """Classify and draw after inference; never feed annotations to the tracker."""
     height, width = frame.shape[:2]
     scale = max(0.45, height / 1800)
@@ -76,9 +83,19 @@ def draw_annotations(frame, detections, tracked_boxes, cv2, rink=None, counts=No
     colors = {ON_ICE: (70, 255, 70), OFF_ICE: (70, 70, 255), UNKNOWN: (0, 220, 255)}
     team_colors = {"HOME": (40, 80, 255), "AWAY": (255, 180, 40),
                    "OFFICIAL": (255, 80, 255), "UNKNOWN": (0, 220, 255)}
-    if rink is not None:
+    if rink is not None and use_static_polygon:
         for a, b in rink.edges():
             cv2.line(frame, tuple(round(v) for v in a), tuple(round(v) for v in b), (255, 220, 0), thickness)
+    if boundary is not None and boundary.points:
+        for a, b in zip(boundary.points, boundary.points[1:]):
+            if b[0] - a[0] <= boundary.bin_width * 1.6:
+                cv2.line(frame, tuple(round(v) for v in a), tuple(round(v) for v in b),
+                         (0, 255, 255), thickness)
+    if near_boundary is not None and near_boundary.points:
+        for a, b in zip(near_boundary.points, near_boundary.points[1:]):
+            if b[0] - a[0] <= near_boundary.bin_width * 1.6:
+                cv2.line(frame, tuple(round(v) for v in a), tuple(round(v) for v in b),
+                         (255, 0, 255), thickness)
 
     def label(text, x, y, color):
         (tw, th), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, thickness)
@@ -98,7 +115,10 @@ def draw_annotations(frame, detections, tracked_boxes, cv2, rink=None, counts=No
             ids.add(identifier)
             state = rink.classify(xyxy) if rink is not None else None
             team = team_results.get(identifier) if team_results else None
-            color = team_colors[team.label] if team is not None else (colors[state] if state else (70, 255, 70))
+            participant = participant_results.get(identifier) if participant_results else None
+            color = ((70, 70, 255) if participant is not None and participant.state == REJECTED
+                     else team_colors[team.label] if team is not None
+                     else (colors[state] if state else (70, 255, 70)))
             if state is not None:
                 if counts is not None:
                     counts[state] += 1
@@ -106,7 +126,9 @@ def draw_annotations(frame, detections, tracked_boxes, cv2, rink=None, counts=No
                 cv2.circle(frame, point, 5, color, -1)
             x1, y1, x2, y2 = map(int, xyxy)
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
-            text = (f"{team.label} {identifier} | {team.confidence:.2f}" if team is not None
+            text = (f"NON-PARTICIPANT {identifier} | {participant.reason}" 
+                    if participant is not None and participant.state == REJECTED
+                    else f"{team.label} {identifier} | {team.confidence:.2f}" if team is not None
                     else track_label(identifier, confidence, state))
             label(text, x1, y1 - 4, color)
     legend = "Temporary tracks - NOT player/jersey IDs | Gray: person detection"
@@ -115,7 +137,7 @@ def draw_annotations(frame, detections, tracked_boxes, cv2, rink=None, counts=No
     else:
         legend += " | Green: tracked"
     label(legend, 8, 26, (255, 255, 255))
-    if rink is not None:
+    if rink is not None and use_static_polygon:
         label("STATIC polygon experiment - camera pans can invalidate geometry", 8, 54, (255, 255, 255))
     if team_results is not None:
         label("Team mode: visual evidence; track IDs remain temporary", 8, 82, (255, 255, 255))
@@ -192,14 +214,16 @@ def analyze(source: Path, rink: RinkGeometry | None = None,
             target_frame: int | None = None, target_point=None,
             target_grace_frames=2, target_max_gap_seconds=3.0,
             team_classifier: TeamClassifier | None = None,
-            team_output_directory: Path | None = None) -> Path:
+            team_output_directory: Path | None = None,
+            performance_profile: Path | None = None) -> Path:
     if target_frame is not None and (type(target_frame) is not int or target_frame < 0):
         raise ValueError("Target frame must be a nonnegative zero-based integer.")
     if target_point is not None and (target_frame is None or len(target_point) != 2
                                      or not all(math.isfinite(v) for v in target_point)):
         raise ValueError("--target-point requires --target-frame and two finite pixel coordinates.")
-    if team_classifier is not None and rink is None:
-        raise ValueError("Team analysis requires --rink so only ON ICE tracks are classified.")
+    if (team_classifier is not None and rink is None
+            and team_classifier.participant_filter.get("use_static_polygon", False)):
+        raise ValueError("Legacy static-polygon filtering requires --rink.")
     source = validate_input(source)
     weights = ROOT / "yolo11s.pt"
     if not weights.is_file():
@@ -212,6 +236,7 @@ def analyze(source: Path, rink: RinkGeometry | None = None,
     from ultralytics import YOLO
 
     started = time.perf_counter()
+    profiler = PipelineProfiler() if performance_profile is not None else None
     capture = cv2.VideoCapture(str(source))
     writer = None
     debug = None
@@ -232,6 +257,12 @@ def analyze(source: Path, rink: RinkGeometry | None = None,
             rink.validate_resolution(spec.width, spec.height)
         expected_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
         identity = TargetIdentity(spec.fps, target_grace_frames, target_max_gap_seconds) if target_frame is not None else None
+        participant_filter = ParticipantFilter(team_classifier.participant_filter) if team_classifier is not None else None
+        boundary_detector = KickplateBoundaryDetector(team_classifier.kickplate_boundary) if team_classifier is not None else None
+        near_boundary_detector = NearBoardBoundaryDetector(team_classifier.near_board_boundary) if team_classifier is not None else None
+        overlay_mask = ProviderOverlayMask(team_classifier.provider) if team_classifier is not None else ProviderOverlayMask()
+        provider_exclusions = Counter()
+        use_polygon = team_classifier.participant_filter.get("use_static_polygon", False) if team_classifier is not None else True
         if target_point is not None and not (0 <= target_point[0] < spec.width and 0 <= target_point[1] < spec.height):
             raise ValueError("Target point must be inside the original video resolution.")
         ok, frame = capture.read()
@@ -244,7 +275,18 @@ def analyze(source: Path, rink: RinkGeometry | None = None,
         def retain_detections(predictor):
             # Registered BEFORE model.track's callback: tracking can discard
             # detections that have not yet acquired a confirmed ID.
-            raw_detections[:] = predictor.results[0].boxes.xyxy.cpu().tolist()
+            boxes = predictor.results[0].boxes
+            coordinates = boxes.xyxy.cpu().tolist()
+            if overlay_mask.enabled:
+                kept, decisions = overlay_mask.filter_detections(
+                    coordinates, spec.width, spec.height)
+                provider_exclusions["post_yolo_removed"] += len(decisions["removed"])
+                provider_exclusions["retained_partial_overlaps"] += len(
+                    decisions["retained_overlaps"])
+                boxes = boxes[kept]
+                predictor.results[0].boxes = boxes
+                coordinates = boxes.xyxy.cpu().tolist()
+            raw_detections[:] = coordinates
 
         model.add_callback("on_predict_postprocess_end", retain_detections)
         output = ((team_output_directory or ROOT / "output" / "team_baseline").resolve() / "annotated.mp4"
@@ -292,17 +334,54 @@ def analyze(source: Path, rink: RinkGeometry | None = None,
         while ok:
             if frame.shape[:2] != (spec.height, spec.width):
                 raise RuntimeError("Decoded frame dimensions changed unexpectedly.")
-            result = model.track(frame, **TRACK_OPTIONS)[0]
+            with profiler.measure("provider overlay masking") if profiler else nullcontext():
+                analysis_frame = overlay_mask.apply(frame)
+            with profiler.measure("shared frame preprocessing") if profiler else nullcontext():
+                analysis_hsv = cv2.cvtColor(analysis_frame, cv2.COLOR_BGR2HSV)
+            track_started = time.perf_counter()
+            result = model.track(analysis_frame, **TRACK_OPTIONS)[0]
+            track_elapsed = time.perf_counter() - track_started
+            if profiler:
+                speed = result.speed or {}
+                yolo_seconds = sum(float(speed.get(key, 0.0)) for key in ("preprocess", "inference", "postprocess")) / 1000
+                profiler.add("YOLO person inference", min(track_elapsed, yolo_seconds))
+                profiler.add("ByteTrack/tracking and framework overhead", max(0.0, track_elapsed - yolo_seconds))
             team_results = None
+            participant_results = None
+            with profiler.measure("far kickplate detection") if profiler else nullcontext():
+                boundary = (boundary_detector.estimate(analysis_frame, cv2, analysis_hsv)
+                            if boundary_detector is not None else None)
+            with profiler.measure("near-board detection") if profiler else nullcontext():
+                near_boundary = (near_boundary_detector.estimate(analysis_frame, cv2, analysis_hsv)
+                                 if near_boundary_detector is not None else None)
             if team_classifier is not None:
                 team_results = {}
+                participant_results = {}
                 for box, identifier, detection_confidence in tracked_box_rows(result.boxes):
-                    if rink.classify(box) != ON_ICE:
-                        continue
-                    classified = team_classifier.classify(identifier, frame, box, cv2)
-                    team_results[identifier] = classified
+                    filter_started = time.perf_counter()
+                    participant = participant_filter.classify(
+                        analysis_frame, box, rink.classify(box) if rink is not None else UNKNOWN, cv2,
+                                                              boundary, near_boundary, use_polygon)
+                    if profiler:
+                        elapsed = time.perf_counter() - filter_started
+                        profiler.add("participant filtering", elapsed, "detection")
+                        profiler.add("local surface/ice validation", elapsed, "detection")
+                    participant_results[identifier] = participant
+                    classified = None
+                    if participant.accepted:
+                        classify_started = time.perf_counter()
+                        classified = team_classifier.classify(
+                            identifier, analysis_frame, box, cv2, detection_confidence)
+                        if profiler:
+                            profiler.add("team/role feature extraction and temporal classification",
+                                         time.perf_counter() - classify_started, "detection")
+                        team_results[identifier] = classified
+                    diagnostic_started = time.perf_counter()
                     team_debug.add(frames, spec.fps, identifier, box, detection_confidence,
-                                   classified, frame, cv2)
+                                   participant, classified, analysis_frame, cv2)
+                    if profiler:
+                        profiler.add("JSONL/diagnostic output", time.perf_counter() - diagnostic_started,
+                                     "detection")
             if identity is not None:
                 observations = target_observations(frame, result.boxes, cv2, rink)
                 point = None
@@ -324,16 +403,27 @@ def analyze(source: Path, rink: RinkGeometry | None = None,
                     for candidate in identity.candidates:
                         reasons = ', '.join(candidate['reasons']) or candidate['decision']
                         print(f"  Track {candidate['track_id']}: score {candidate['score']:.3f} | {reasons}", flush=True)
-            unique_ids.update(draw_annotations(frame, raw_detections, result.boxes, cv2, rink, counts, team_results))
+            annotation_started = time.perf_counter()
+            unique_ids.update(draw_annotations(frame, raw_detections, result.boxes, cv2, rink, counts,
+                                               team_results, participant_results, boundary, near_boundary,
+                                               use_static_polygon=use_polygon))
             if identity is not None:
                 draw_target(frame, identity, cv2)
+            if profiler:
+                profiler.add("annotation rendering", time.perf_counter() - annotation_started)
+            write_started = time.perf_counter()
             writer.write(frame)
+            if profiler:
+                profiler.add("video encoding/writing", time.perf_counter() - write_started)
             frames += 1
             if frames % 300 == 0:
                 print(f"Processed {frames}/{expected_frames or '?'} frames", flush=True)
                 if team_debug is not None:
                     team_debug.flush()
+            decode_started = time.perf_counter()
             ok, frame = capture.read()
+            if profiler:
+                profiler.add("video decode / frame acquisition", time.perf_counter() - decode_started)
 
         if identity is not None and identity.last is None:
             raise ValueError(f"Seed frame {target_frame} was not decoded; only {frames} frames available.")
@@ -354,7 +444,7 @@ def analyze(source: Path, rink: RinkGeometry | None = None,
                                        associated_ids=identity.ids, transitions=identity.transitions,
                                        report=identity.summary(), completed=True)) + "\n")
         if team_debug is not None:
-            team_debug.finish(frames, cv2)
+            team_debug.finish(frames, cv2, dict(provider_exclusions))
     except BaseException:
         if partial is not None and partial.exists():
             print(f"Incomplete output (not a finished result): {partial}", flush=True)
@@ -368,7 +458,14 @@ def analyze(source: Path, rink: RinkGeometry | None = None,
         if team_debug is not None:
             team_debug.close()
 
-    print(summary(frames, time.perf_counter() - started, output, unique_ids, counts))
+    elapsed = time.perf_counter() - started
+    if profiler is not None:
+        profiler.write(performance_profile, frames, elapsed, notes=[
+            "YOLO timing uses Ultralytics preprocess/inference/postprocess measurements; the remainder of model.track wall time is attributed to ByteTrack and framework overhead.",
+            "Participant filtering includes local surface validation; the local-surface row is a nested view and must not be added to stage totals.",
+            "Team/role and diagnostic stages operate per accepted detection; participant filtering operates per tracked detection.",
+        ])
+    print(summary(frames, elapsed, output, unique_ids, counts))
     if identity is not None:
         print(identity.summary())
     return output
@@ -386,16 +483,18 @@ def main() -> int:
     parser.add_argument("--target-max-gap-seconds", type=float, default=3.0,
                         help="Reacquisition window since last observed target (default: 3 seconds)")
     parser.add_argument("--team-config", type=Path,
-                        help="Opt-in team analysis using per-game visual profiles; requires --rink")
+                        help="Opt-in team analysis using per-game visual profiles")
     parser.add_argument("--team-output-directory", type=Path,
                         help="Team artifact directory (default: output/team_baseline)")
+    parser.add_argument("--performance-profile", type=Path,
+                        help="Write stage timing JSON and a sibling Markdown report")
     args = parser.parse_args()
     try:
         rink = RinkGeometry.load(args.rink) if args.rink else None
         team_classifier = TeamClassifier.load(args.team_config) if args.team_config else None
         analyze(args.video, rink, args.target_frame, args.target_point,
                 args.target_grace_frames, args.target_max_gap_seconds,
-                team_classifier, args.team_output_directory)
+                team_classifier, args.team_output_directory, args.performance_profile)
     except (ValueError, RuntimeError, OSError, ImportError) as error:
         parser.exit(1, f"Error: {error}\n")
     return 0

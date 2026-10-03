@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 from analyze_tracks import VideoSpec, draw_annotations, output_path, summary, track_label, validate_input
+from kickplate_boundary import BoundaryEstimate
 from rink_geometry import RinkGeometry, ON_ICE, OFF_ICE, UNKNOWN
 
 
@@ -109,6 +110,35 @@ class BaselineTests(unittest.TestCase):
         self.assertIn("Unique short-term track IDs: 3", report)
         for state in (ON_ICE, OFF_ICE, UNKNOWN):
             self.assertIn(f"{state} detections (tracked person-frames): 2", report)
+
+    def test_static_polygon_is_drawn_only_when_explicitly_enabled(self):
+        rink = RinkGeometry(100, 100, ((20, 20), (80, 20), (80, 80), (20, 80)), 2)
+        boxes = SimpleNamespace(is_track=False)
+
+        default_cv2 = Mock()
+        default_cv2.getTextSize.return_value = ((100, 12), 3)
+        draw_annotations(SimpleNamespace(shape=(100, 100, 3)), [], boxes, default_cv2, rink)
+        default_cv2.line.assert_not_called()
+        default_labels = [call.args[1] for call in default_cv2.putText.call_args_list]
+        self.assertFalse(any("STATIC polygon" in label for label in default_labels))
+
+        legacy_cv2 = Mock()
+        legacy_cv2.getTextSize.return_value = ((100, 12), 3)
+        draw_annotations(SimpleNamespace(shape=(100, 100, 3)), [], boxes, legacy_cv2, rink,
+                         use_static_polygon=True)
+        self.assertEqual(legacy_cv2.line.call_count, len(list(rink.edges())))
+        legacy_labels = [call.args[1] for call in legacy_cv2.putText.call_args_list]
+        self.assertTrue(any("STATIC polygon" in label for label in legacy_labels))
+
+    def test_camera_relative_boundaries_render_without_static_polygon(self):
+        cv2 = Mock()
+        cv2.getTextSize.return_value = ((100, 12), 3)
+        far = BoundaryEstimate(((10, 30), (20, 31)), 1, 10)
+        near = BoundaryEstimate(((10, 80), (20, 81)), 1, 10)
+        draw_annotations(SimpleNamespace(shape=(100, 100, 3)), [],
+                         SimpleNamespace(is_track=False), cv2,
+                         boundary=far, near_boundary=near)
+        self.assertEqual(cv2.line.call_count, 2)
 
     def test_geometry_does_not_classify_unassigned_detections(self):
         cv2 = Mock()

@@ -1,11 +1,37 @@
+@'
+# Local environment / secrets
 .env
+.env.*
+!.env.example
 .venv/
+
+# Python generated files
 __pycache__/
+*.py[cod]
 
+# Raw source media
 input/
-output/
-runs/
-scratch/
 
-*.zip
+# Generated datasets and analysis artifacts
+output/
+
+# Temporary / experimental workspace
+scratch/
+runs/
+
+# ML training artifacts
+checkpoints/
+wandb/
+mlruns/
+lightning_logs/
+
+# Model weights
 *.pt
+*.pth
+*.ckpt
+*.onnx
+*.safetensors
+
+# Archives
+*.zip
+'@ | Set-Content .gitignore
